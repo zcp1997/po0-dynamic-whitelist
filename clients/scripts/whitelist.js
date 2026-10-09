@@ -1,4 +1,3 @@
-var NAME = 'PO0 动态白名单';
 var INLINE_API_HOST = '';
 var INLINE_TOKEN = '';
 var STORE_API_HOST = 'po0dw_api_host';
@@ -133,7 +132,7 @@ function describeError(err) {
     text = typeof err === 'object' ? String(err.error || err.message || err.description || '') : String(err);
   }
   text = trim(text);
-  if (!text || text === 'null' || text === 'undefined' || text === '{}') return '网络请求失败（超时 / TLS 握手失败 / 被拦截）';
+  if (!text || text === 'null' || text === 'undefined' || text === '{}') return '';
   return text;
 }
 
@@ -157,16 +156,16 @@ function sendOnce(base, token, method, path) {
       $task.fetch(opts).then(
         function (resp) {
           if (resp && resp.statusCode) resolve({ status: resp.statusCode, body: resp.body });
-          else resolve({ error: describeError(null) });
+          else resolve({ error: true });
         },
         function (err) {
-          resolve({ error: describeError(err && err.error !== undefined ? err.error : err) });
+          resolve({ error: true, detail: describeError(err && err.error !== undefined ? err.error : err) });
         }
       );
       return;
     }
     if (!hasHttpClient) {
-      resolve({ error: '当前客户端不支持 $httpClient' });
+      resolve({ error: true, detail: '当前客户端不支持 $httpClient' });
       return;
     }
     opts.insecure = false;
@@ -175,7 +174,7 @@ function sendOnce(base, token, method, path) {
     else opts.policy = 'DIRECT';
     var callback = function (err, resp, body) {
       var status = resp && (resp.status || resp.statusCode);
-      if (err || !status) resolve({ error: describeError(err) });
+      if (err || !status) resolve({ error: true, detail: describeError(err) });
       else resolve({ status: status, body: body });
     };
     if (method === 'POST') $httpClient.post(opts, callback);
@@ -190,11 +189,7 @@ function retryable(r) {
 function send(base, token, method, path, attempt) {
   attempt = attempt || 1;
   return sendOnce(base, token, method, path).then(function (r) {
-    if (!retryable(r)) return r;
-    if (attempt >= RETRY) {
-      if (r.error) r.error += '（已重试 ' + RETRY + ' 次）';
-      return r;
-    }
+    if (!retryable(r) || attempt >= RETRY) return r;
     return delay(RETRY_DELAY_MS * attempt).then(function () {
       return send(base, token, method, path, attempt + 1);
     });
@@ -202,38 +197,74 @@ function send(base, token, method, path, attempt) {
 }
 
 var SERVER_ERRORS = {
-  unauthorized: 'Token 错误',
-  'untrusted peer': 'API 只接受可信反代，检查 trusted_proxy_ip',
-  'invalid public IPv4': '服务端没拿到公网 IPv4，请求可能走了代理 / IPv6',
-  'INPUT/FORWARD guard not verified': '服务端防火墙规则校验失败',
-  'queue / ipset mismatch; manual repair required': '队列与 ipset 不一致，需在服务端 repair',
+  unauthorized: 'Token 不正确，请核对 token 配置',
+  'untrusted peer': '服务端只接受可信反代，请检查 trusted_proxy_ip',
+  'invalid public IPv4': '服务端没拿到公网 IPv4，请求可能走了代理或 IPv6',
+  'INPUT/FORWARD guard not verified': '服务端防火墙规则校验未通过',
+  'queue / ipset mismatch; manual repair required': '服务端队列与 ipset 不一致，需要手动 repair',
   'failed to apply whitelist': '服务端写入 ipset 失败',
-  'firewall unavailable': '服务端防火墙不可用',
-  'not found': '路径不存在，检查 api_host'
+  'firewall unavailable': '服务端防火墙暂时不可用',
+  'not found': '接口地址不对，请检查 api_host'
+};
+
+var TITLES = {
+  added: '✅ PO0 已加入白名单',
+  evicted: '✅ PO0 已加入白名单',
+  exists: '✅ PO0 已在白名单',
+  ineffective: '⚠️ PO0 加白未生效',
+  fail: '❌ PO0 加白失败',
+  config: '⚙️ PO0 待配置'
+};
+
+var STYLES = {
+  ok: { icon: 'checkmark.shield', color: '#34C759' },
+  warn: { icon: 'exclamationmark.shield', color: '#FF9500' },
+  fail: { icon: 'xmark.shield', color: '#FF3B30' }
 };
 
 function statusHint(status, body) {
   if (status === 502 || status === 504) return 'Nginx 连不上内网 API';
-  if (status === 404) return '路径不存在，检查 api_host 与 Nginx location';
-  if (status === 403) return '被 Nginx 拒绝';
-  return String(body || '').replace(/\s+/g, ' ').slice(0, 80) || '无响应体';
+  if (status === 404) return '接口地址不对，请检查 api_host 和 Nginx 配置';
+  if (status === 403) return '请求被 Nginx 拒绝';
+  var text = String(body || '').replace(/\s+/g, ' ').slice(0, 60);
+  return text ? '服务器返回了意外内容：' + text : '服务器没有返回内容';
+}
+
+function firewallProblem(d) {
+  var fw = d.firewall || {};
+  var bad = [];
+  if (fw.input !== true) bad.push('INPUT');
+  if (fw.forward !== true) bad.push('FORWARD');
+  return bad.length ? '服务端 ' + bad.join(' / ') + ' 规则校验未通过' : '服务端队列与 ipset 不一致';
 }
 
 function interpret(r) {
-  if (r.error) return { ok: false, reason: r.error };
+  if (r.error) {
+    return { kind: 'fail', reason: '连不上服务器，已重试 ' + RETRY + ' 次', detail: r.detail || '可能是超时、TLS 握手失败或被拦截' };
+  }
   var d = parseJSON(r.body);
   if (!d || r.status < 200 || r.status >= 300) {
     var msg = d && d.error ? SERVER_ERRORS[d.error] || d.error : statusHint(r.status, r.body);
-    return { ok: false, reason: 'HTTP ' + r.status + ' ' + msg };
+    return { kind: 'fail', reason: msg + '（HTTP ' + r.status + '）' };
   }
   var list = (Array.isArray(d.whitelist) ? d.whitelist : []).map(function (e) {
     return e && typeof e === 'object' ? e.ip : e;
   });
-  var listed = !!d.currentIp && list.indexOf(d.currentIp) >= 0;
-  var ok = d.enabled === true && listed;
-  var reason = '';
-  if (!ok) reason = d.enabled !== true ? '服务端规则校验未通过' : '当前 IP 不在白名单';
-  return { ok: ok, data: d, list: list, reason: reason };
+  var res = { data: d, list: list };
+  if (d.enabled !== true) {
+    res.kind = 'ineffective';
+    res.reason = firewallProblem(d);
+  } else if (!d.currentIp || list.indexOf(d.currentIp) < 0) {
+    res.kind = 'ineffective';
+    res.reason = '本机 IP 不在白名单中';
+  } else {
+    res.kind = d.action === 'added' || d.action === 'evicted' ? d.action : 'exists';
+  }
+  return res;
+}
+
+function isOk(res) {
+  return res.kind === 'added' || res.kind === 'exists' || res.kind === 'evicted';
 }
 
 function onCellular() {
@@ -253,54 +284,58 @@ function isPanel() {
   }
 }
 
-function mark(v) {
-  return v === true ? '✓' : '✗';
+function slots(res) {
+  var limit = res.data.limit === undefined || res.data.limit === null ? '?' : res.data.limit;
+  return res.list.length + '/' + limit;
 }
 
-var ACTIONS = { added: '新增', exists: '已存在', evicted: '新增并淘汰最早 IP' };
-
-function render(res) {
+function render(res, cellular) {
   var lines = [];
-  if (!res.ok) lines.push(res.reason);
-  if (res.data) {
-    var d = res.data;
-    if (d.currentIp) lines.push('IP: ' + d.currentIp + (onCellular() ? ' 📶' : ''));
-    lines.push('槽位: ' + res.list.length + '/' + (d.limit === undefined || d.limit === null ? '?' : d.limit));
-    if (d.action) lines.push('操作: ' + (ACTIONS[d.action] || d.action));
-    if (d.evicted) lines.push('淘汰: ' + d.evicted);
-    if (d.firewall) lines.push('防火墙: INPUT ' + mark(d.firewall.input) + ' FORWARD ' + mark(d.firewall.forward));
+  var d = res.data;
+  if (d && d.currentIp) lines.push(d.currentIp + (cellular ? '（蜂窝网络）' : ''));
+  if (res.kind === 'added') {
+    lines.push('刚刚加入，已用 ' + slots(res) + ' 个槽位');
+  } else if (res.kind === 'exists') {
+    lines.push('无需重复添加，已用 ' + slots(res) + ' 个槽位');
+  } else if (res.kind === 'evicted') {
+    lines.push('刚刚加入，槽位已满 ' + slots(res));
+    lines.push('最早的 ' + (d.evicted || 'IP') + ' 已被移出');
+  } else {
+    lines.push(res.reason);
+    if (res.detail) lines.push(res.detail);
   }
   return lines.join('\n');
 }
 
 var finished = false;
 
-function finish(title, content, ok) {
+function finish(title, content, style) {
   if (finished) return;
   finished = true;
   if (isQX) {
     $done();
     return;
   }
-  var color = ok ? '#34C759' : '#FF3B30';
   $done({
     title: title,
     content: content,
-    icon: ok ? 'checkmark.shield' : 'xmark.shield',
-    'icon-color': color,
-    backgroundColor: color
+    icon: style.icon,
+    'icon-color': style.color,
+    backgroundColor: style.color
   });
 }
 
 function report(res) {
-  var title = res.ok ? '✅ PO0 加白成功' : res.config ? NAME : '❌ PO0 加白失败';
-  var content = render(res);
-  var state = res.ok ? 'ok|' + res.data.currentIp : 'fail|' + res.reason;
+  var ok = isOk(res);
+  var title = TITLES[res.kind] || TITLES.fail;
+  var content = render(res, onCellular());
+  var style = ok ? STYLES.ok : res.kind === 'fail' ? STYLES.fail : STYLES.warn;
+  var state = ok ? 'ok|' + res.data.currentIp : res.kind + '|' + res.reason;
   if (storeRead(STORE_STATE) !== state) {
     storeWrite(state, STORE_STATE);
-    if (!isPanel()) notify(NAME, title, content);
+    if (!isPanel()) notify(title, '', content);
   }
-  finish(title, content, res.ok);
+  finish(title, content, style);
 }
 
 function run() {
@@ -312,15 +347,15 @@ function run() {
     var missing = [];
     if (!base) missing.push('api_host');
     if (!token) missing.push('token');
-    return Promise.resolve({ ok: false, config: true, reason: '请配置 ' + missing.join(' 和 ') });
+    return Promise.resolve({ kind: 'config', reason: '请先填写 ' + missing.join(' 和 ') });
   }
   return send(base, token, 'POST', '/add').then(interpret);
 }
 
 try {
   run().then(report, function (e) {
-    report({ ok: false, reason: '脚本异常: ' + describeError(e) });
+    report({ kind: 'fail', reason: '脚本运行出错', detail: describeError(e) });
   });
 } catch (e) {
-  report({ ok: false, reason: '脚本异常: ' + describeError(e) });
+  report({ kind: 'fail', reason: '脚本运行出错', detail: describeError(e) });
 }

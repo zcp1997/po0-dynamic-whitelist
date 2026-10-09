@@ -101,13 +101,11 @@ test('Surge: 成功加白，请求直连并带 Bearer', async () => {
   assert.equal(req.timeout, 10);
   assert.equal(req.insecure, false);
   assert.equal(req.node, undefined);
-  assert.equal(r.value.title, '✅ PO0 加白成功');
-  assert.match(r.value.content, /IP: 203\.0\.113\.7 📶/);
-  assert.match(r.value.content, /槽位: 2\/10/);
-  assert.match(r.value.content, /操作: 新增/);
-  assert.match(r.value.content, /防火墙: INPUT ✓ FORWARD ✓/);
+  assert.equal(r.value.title, '✅ PO0 已加入白名单');
+  assert.equal(r.value.content, '203.0.113.7（蜂窝网络）\n刚刚加入，已用 2/10 个槽位');
   assert.equal(r.value.icon, 'checkmark.shield');
   assert.equal(r.notes.length, 1);
+  assert.deepEqual(r.notes[0], ['✅ PO0 已加入白名单', '', r.value.content]);
   assert.equal(r.store.po0dw_state, 'ok|203.0.113.7');
 });
 
@@ -121,7 +119,7 @@ test('Surge: 状态不变不重复通知，面板不通知', async () => {
     responses: [{ status: 401, body: '{"error": "unauthorized"}' }]
   });
   assert.equal(panel.notes.length, 0);
-  assert.equal(panel.store.po0dw_state, 'fail|HTTP 401 Token 错误');
+  assert.equal(panel.store.po0dw_state, 'fail|Token 不正确，请核对 token 配置（HTTP 401）');
 });
 
 test('Surge: 兼容旧版参数里的编码 url', async () => {
@@ -137,7 +135,7 @@ test('Loon: 插件对象参数、node 直连、毫秒超时', async () => {
   assert.equal(req.policy, undefined);
   assert.equal(req.timeout, 10000);
   assert.equal(req.insecure, false);
-  assert.equal(r.value.title, '✅ PO0 加白成功');
+  assert.equal(r.value.title, '✅ PO0 已加入白名单');
 });
 
 test('Quantumult X: 从 URL # 参数读取配置，direct 策略', async () => {
@@ -150,7 +148,7 @@ test('Quantumult X: 从 URL # 参数读取配置，direct 策略', async () => {
   assert.equal(req.opts['skip-cert-verify'], false);
   assert.equal(r.value, undefined);
   assert.equal(r.notes.length, 1);
-  assert.equal(r.notes[0][1], '✅ PO0 加白成功');
+  assert.equal(r.notes[0][0], '✅ PO0 已加入白名单');
 });
 
 test('Quantumult X: 支持 $environment.variables', async () => {
@@ -174,14 +172,15 @@ test('Shadowrocket: 去掉外层引号后解析参数', async () => {
 test('未替换占位符时不发请求并提示配置', async () => {
   const r = await runShared('stash', { argument: 'api_host=fw.example.com&token=REPLACE_WITH_TOKEN' });
   assert.equal(r.requests.length, 0);
-  assert.equal(r.value.title, 'PO0 动态白名单');
-  assert.equal(r.value.content, '请配置 api_host 和 token');
+  assert.equal(r.value.title, '⚙️ PO0 待配置');
+  assert.equal(r.value.content, '请先填写 api_host 和 token');
+  assert.equal(r.value.icon, 'exclamationmark.shield');
 });
 
 test('拒绝 http:// 地址', async () => {
   const r = await runShared('surge', { argument: 'token=' + TOKEN + '&url=http://fw.test.example' });
   assert.equal(r.requests.length, 0);
-  assert.equal(r.value.content, '请配置 api_host');
+  assert.equal(r.value.content, '请先填写 api_host');
 });
 
 test('持久化存储兜底', async () => {
@@ -193,7 +192,8 @@ test('401 不重试并给出中文原因', async () => {
   const r = await runShared('surge', { argument: SURGE_ARG, responses: [{ status: 401, body: '{"error": "unauthorized"}' }] });
   assert.equal(r.requests.length, 1);
   assert.equal(r.value.title, '❌ PO0 加白失败');
-  assert.equal(r.value.content, 'HTTP 401 Token 错误');
+  assert.equal(r.value.content, 'Token 不正确，请核对 token 配置（HTTP 401）');
+  assert.equal(r.value.icon, 'xmark.shield');
 });
 
 test('502 重试后成功', async () => {
@@ -202,7 +202,7 @@ test('502 重试后成功', async () => {
     responses: [{ status: 502, body: '<html>502</html>' }, OK]
   });
   assert.equal(r.requests.length, 2);
-  assert.equal(r.value.title, '✅ PO0 加白成功');
+  assert.equal(r.value.title, '✅ PO0 已加入白名单');
 });
 
 test('网络错误重试 3 次', async () => {
@@ -211,7 +211,7 @@ test('网络错误重试 3 次', async () => {
     responses: [{ error: null }]
   });
   assert.equal(r.requests.length, 3);
-  assert.match(r.value.content, /网络请求失败.*已重试 3 次/);
+  assert.equal(r.value.content, '连不上服务器，已重试 3 次\n可能是超时、TLS 握手失败或被拦截');
 });
 
 test('enabled=false 判定失败并展示防火墙状态', async () => {
@@ -219,9 +219,9 @@ test('enabled=false 判定失败并展示防火墙状态', async () => {
     argument: SURGE_ARG,
     responses: [{ status: 200, body: body({ enabled: false, firewall: { input: true, forward: false } }) }]
   });
-  assert.equal(r.value.title, '❌ PO0 加白失败');
-  assert.match(r.value.content, /服务端规则校验未通过/);
-  assert.match(r.value.content, /FORWARD ✗/);
+  assert.equal(r.value.title, '⚠️ PO0 加白未生效');
+  assert.equal(r.value.content, '203.0.113.7\n服务端 FORWARD 规则校验未通过');
+  assert.equal(r.value.icon, 'exclamationmark.shield');
 });
 
 test('淘汰信息', async () => {
@@ -229,8 +229,22 @@ test('淘汰信息', async () => {
     argument: SURGE_ARG,
     responses: [{ status: 200, body: body({ action: 'evicted', evicted: '192.0.2.9' }) }]
   });
-  assert.match(r.value.content, /操作: 新增并淘汰最早 IP/);
-  assert.match(r.value.content, /淘汰: 192\.0\.2\.9/);
+  assert.equal(r.value.title, '✅ PO0 已加入白名单');
+  assert.equal(r.value.content, '203.0.113.7\n刚刚加入，槽位已满 2/10\n最早的 192.0.2.9 已被移出');
+});
+
+test('已在白名单', async () => {
+  const r = await runShared('surge', {
+    argument: SURGE_ARG,
+    responses: [{ status: 200, body: body({ action: 'exists' }) }]
+  });
+  assert.equal(r.value.title, '✅ PO0 已在白名单');
+  assert.equal(r.value.content, '203.0.113.7\n无需重复添加，已用 2/10 个槽位');
+});
+
+test('Nginx 返回非 JSON 时给出可读提示', async () => {
+  const r = await runShared('surge', { argument: SURGE_ARG, responses: [{ status: 404, body: '<html>404</html>' }] });
+  assert.equal(r.value.content, '接口地址不对，请检查 api_host 和 Nginx 配置（HTTP 404）');
 });
 
 function runEgern(env, responses, storage) {
@@ -269,8 +283,8 @@ test('Egern: 成功加白并通知', async () => {
   assert.equal(r.requests[0].timeout, 10000);
   assert.equal(r.requests[0].headers.Authorization, 'Bearer ' + TOKEN);
   assert.equal(r.notes.length, 1);
-  assert.equal(r.notes[0].subtitle, '✅ PO0 加白成功');
-  assert.match(r.notes[0].body, /IP: 203\.0\.113\.7 📶/);
+  assert.equal(r.notes[0].title, '✅ PO0 已加入白名单');
+  assert.equal(r.notes[0].body, '203.0.113.7（蜂窝网络）\n刚刚加入，已用 2/10 个槽位');
   const again = await runEgern({ api_host: 'fw.test.example', token: TOKEN }, [OK], r.kv);
   assert.equal(again.notes.length, 0);
 });
@@ -278,16 +292,18 @@ test('Egern: 成功加白并通知', async () => {
 test('Egern: 非 2xx 抛错时解析状态码', async () => {
   const r = await runEgern({ api_host: 'fw.test.example', token: TOKEN }, [{ status: 401, body: '{"error": "unauthorized"}' }]);
   assert.equal(r.requests.length, 1);
-  assert.equal(r.notes[0].body, 'HTTP 401 Token 错误');
+  assert.equal(r.notes[0].title, '❌ PO0 加白失败');
+  assert.equal(r.notes[0].body, 'Token 不正确，请核对 token 配置（HTTP 401）');
 });
 
 test('Egern: 网络错误重试，未配置不请求', async () => {
   const r = await runEgern({ api_host: 'fw.test.example', token: TOKEN }, [{ throwMessage: 'The request timed out.' }]);
   assert.equal(r.requests.length, 3);
-  assert.match(r.notes[0].body, /The request timed out\.（已重试 3 次）/);
+  assert.equal(r.notes[0].body, '连不上服务器，已重试 3 次\nThe request timed out.');
   const none = await runEgern({ api_host: 'fw.example.com', token: '' });
   assert.equal(none.requests.length, 0);
-  assert.equal(none.notes[0].body, '请配置 api_host 和 token');
+  assert.equal(none.notes[0].title, '⚙️ PO0 待配置');
+  assert.equal(none.notes[0].body, '请先填写 api_host 和 token');
 });
 
 const MODULES = [

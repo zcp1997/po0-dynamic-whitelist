@@ -79,20 +79,16 @@ json_ips() {
   printf '%s' "$1" | grep -o '"ip"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/'
 }
 
-mark() {
-  if [ "$1" = true ]; then printf '✓'; else printf '✗'; fi
-}
-
 server_hint() {
   case "$1" in
-    unauthorized) printf 'Token 错误' ;;
-    'untrusted peer') printf 'API 只接受可信反代，检查 trusted_proxy_ip' ;;
-    'invalid public IPv4') printf '服务端没拿到公网 IPv4，请求可能走了代理 / IPv6' ;;
-    'INPUT/FORWARD guard not verified') printf '服务端防火墙规则校验失败' ;;
-    'queue / ipset mismatch; manual repair required') printf '队列与 ipset 不一致，需在服务端 repair' ;;
+    unauthorized) printf 'Token 不正确，请核对 PO0DW_TOKEN' ;;
+    'untrusted peer') printf '服务端只接受可信反代，请检查 trusted_proxy_ip' ;;
+    'invalid public IPv4') printf '服务端没拿到公网 IPv4，请求可能走了代理或 IPv6' ;;
+    'INPUT/FORWARD guard not verified') printf '服务端防火墙规则校验未通过' ;;
+    'queue / ipset mismatch; manual repair required') printf '服务端队列与 ipset 不一致，需要手动 repair' ;;
     'failed to apply whitelist') printf '服务端写入 ipset 失败' ;;
-    'firewall unavailable') printf '服务端防火墙不可用' ;;
-    'not found') printf '路径不存在，检查 PO0DW_URL' ;;
+    'firewall unavailable') printf '服务端防火墙暂时不可用' ;;
+    'not found') printf '接口地址不对，请检查 PO0DW_URL' ;;
     *) printf '%s' "$1" ;;
   esac
 }
@@ -100,9 +96,12 @@ server_hint() {
 status_hint() {
   case "$1" in
     502|504) printf 'Nginx 连不上内网 API' ;;
-    404) printf '路径不存在，检查 PO0DW_URL 与 Nginx location' ;;
-    403) printf '被 Nginx 拒绝' ;;
-    *) printf '%s' "$2" | tr '\r\n\t' '   ' | cut -c1-80 ;;
+    404) printf '接口地址不对，请检查 PO0DW_URL 和 Nginx 配置' ;;
+    403) printf '请求被 Nginx 拒绝' ;;
+    *)
+      text=$(printf '%s' "$2" | tr '\r\n\t' '   ' | cut -c1-60)
+      if [ -n "$text" ]; then printf '服务器返回了意外内容：%s' "$text"; else printf '服务器没有返回内容'; fi
+      ;;
   esac
 }
 
@@ -142,14 +141,14 @@ request() {
 
 fail_reason() {
   if [ -n "${ERR:-}" ]; then
-    printf '网络请求失败（已重试 %s 次）：%s' "$RETRY" "$ERR"
+    printf '连不上服务器，已重试 %s 次（%s）' "$RETRY" "$ERR"
     return
   fi
   err=$(json_str "$BODY" error)
   if [ -n "$err" ]; then
-    printf 'HTTP %s %s' "$CODE" "$(server_hint "$err")"
+    printf '%s（HTTP %s）' "$(server_hint "$err")" "$CODE"
   else
-    printf 'HTTP %s %s' "$CODE" "$(status_hint "$CODE" "$BODY")"
+    printf '%s（HTTP %s）' "$(status_hint "$CODE" "$BODY")" "$CODE"
   fi
 }
 
@@ -171,55 +170,75 @@ summarize() {
     COUNT=$((COUNT + 1))
     [ "$ip" = "$CUR" ] && LISTED=1
   done
-  FW="防火墙 INPUT $(mark "$(json_raw "$BODY" input)") FORWARD $(mark "$(json_raw "$BODY" forward)")"
+  SLOTS="$COUNT/${LIMIT:-?}"
+}
+
+fw_problem() {
+  bad=
+  [ "$(json_raw "$BODY" input)" = true ] || bad=INPUT
+  if [ "$(json_raw "$BODY" forward)" != true ]; then
+    bad=${bad:+$bad / }FORWARD
+  fi
+  if [ -n "$bad" ]; then
+    printf '服务端 %s 规则校验未通过' "$bad"
+  else
+    printf '服务端队列与 ipset 不一致'
+  fi
 }
 
 cmd_add() {
   if ! request POST /add || [ "$CODE" -lt 200 ] || [ "$CODE" -ge 300 ] || ! is_json "$BODY"; then
-    log "❌ $(fail_reason)"
+    log "❌ 加白失败：$(fail_reason)"
     return 1
   fi
   summarize
-  action=$(json_str "$BODY" action)
-  evicted=$(json_str "$BODY" evicted)
-  case "$action" in
-    added) what=新增 ;;
-    exists) what=已存在 ;;
-    evicted) what="新增，淘汰 $evicted" ;;
-    *) what=${action:-未知} ;;
-  esac
-  if [ "$ENABLED" = true ] && [ "$LISTED" = 1 ]; then
-    log "✅ $CUR 已在白名单（$what，槽位 $COUNT/${LIMIT:-?}，$FW）"
-    return 0
-  fi
   if [ "$ENABLED" != true ]; then
-    log "❌ 服务端规则校验未通过（IP ${CUR:-?}，$FW）"
-  else
-    log "❌ 当前 IP ${CUR:-?} 不在白名单（槽位 $COUNT/${LIMIT:-?}）"
+    log "⚠️ 加白未生效：$(fw_problem)（本机 IP ${CUR:-未知}）"
+    return 1
   fi
-  return 1
+  if [ "$LISTED" != 1 ]; then
+    log "⚠️ 加白未生效：本机 IP ${CUR:-未知} 不在白名单中"
+    return 1
+  fi
+  case "$(json_str "$BODY" action)" in
+    added) log "✅ 已加入白名单：$CUR（已用 $SLOTS 个槽位）" ;;
+    evicted)
+      evicted=$(json_str "$BODY" evicted)
+      log "✅ 已加入白名单：$CUR（槽位已满 $SLOTS，最早的 ${evicted:-IP} 已被移出）"
+      ;;
+    *) log "✅ 已在白名单：$CUR，无需重复添加（已用 $SLOTS 个槽位）" ;;
+  esac
+  return 0
 }
 
 cmd_status() {
   if ! request GET /status || [ "$CODE" -lt 200 ] || [ "$CODE" -ge 300 ] || ! is_json "$BODY"; then
-    log "❌ $(fail_reason)"
+    log "❌ 查询失败：$(fail_reason)"
     return 1
   fi
   summarize
-  log "当前出口 ${CUR:-未知}"
-  n=0
-  for ip in $IPS; do
-    n=$((n + 1))
-    if [ "$ip" = "$CUR" ]; then log "  → $n. $ip"; else log "    $n. $ip"; fi
-  done
-  [ "$n" -gt 0 ] || log "    （白名单为空）"
-  log "槽位 $COUNT/${LIMIT:-?} · $FW · 规则$( [ "$ENABLED" = true ] && printf '生效' || printf '未生效')"
   if [ "$LISTED" = 1 ] && [ "$ENABLED" = true ]; then
-    log "✅ 当前出口已在白名单"
-    return 0
+    log "✅ 本机出口 $CUR 已在白名单"
+    ret=0
+  elif [ "$LISTED" = 1 ]; then
+    log "⚠️ 本机出口 $CUR 在白名单中，但$(fw_problem)"
+    ret=1
+  else
+    log "⚠️ 本机出口 ${CUR:-未知} 不在白名单，运行 po0dw 即可加入"
+    [ "$ENABLED" = true ] || log "⚠️ $(fw_problem)"
+    ret=1
   fi
-  log "⚠️  当前出口不在白名单（status 只查询不加白，需要时运行 po0dw）"
-  return 1
+  if [ "$COUNT" -eq 0 ]; then
+    log "白名单为空（$SLOTS）"
+  else
+    log "白名单 $SLOTS（越靠前越早被移出）："
+    n=0
+    for ip in $IPS; do
+      n=$((n + 1))
+      if [ "$ip" = "$CUR" ]; then log "  $n. $ip  ← 本机"; else log "  $n. $ip"; fi
+    done
+  fi
+  return "$ret"
 }
 
 MODE=add
@@ -236,8 +255,8 @@ command -v curl >/dev/null 2>&1 || die '缺少 curl，请先安装'
 CONF=$(find_conf)
 RAW_URL=${PO0DW_URL:-$(conf_get PO0DW_URL "$CONF")}
 TOKEN=${PO0DW_TOKEN:-$(conf_get PO0DW_TOKEN "$CONF")}
-BASE=$(normalize_base "$RAW_URL") || die "PO0DW_URL 无效或未配置（需 https 域名，当前: ${RAW_URL:-空}）"
-valid_token "$TOKEN" || die 'PO0DW_TOKEN 无效或未配置（至少 24 位可见 ASCII 字符）'
+BASE=$(normalize_base "$RAW_URL") || die "未配置 PO0DW_URL，或地址不是 https 域名（当前：${RAW_URL:-空}）"
+valid_token "$TOKEN" || die '未配置 PO0DW_TOKEN，或格式不对（需要至少 24 位可见 ASCII 字符）'
 ERR=
 
 if [ "$MODE" = status ]; then

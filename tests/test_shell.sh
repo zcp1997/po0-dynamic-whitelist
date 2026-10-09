@@ -74,49 +74,52 @@ suite() {
   export PO0DW_URL=fw.test.example PO0DW_TOKEN=$TOKEN
 
   reset; respond 200 "$OK_ADDED"; run
-  check 'add success' '[ "$RC" = 0 ] && has "✅ 203.0.113.7 已在白名单（新增，槽位 2/10，防火墙 INPUT ✓ FORWARD ✓）"'
+  check 'add success' '[ "$RC" = 0 ] && has "✅ 已加入白名单：203.0.113.7（已用 2/10 个槽位）"'
   check 'add uses POST /add with noproxy and ipv4' 'arg https://fw.test.example/add && arg POST && arg --noproxy && arg -4'
   check 'token only via curl config' '! grep -F "$TOKEN" "$TMP/mock/args" >/dev/null && grep -x -F "header = \"Authorization: Bearer $TOKEN\"" "$TMP/mock/config" >/dev/null'
 
   reset; respond 200 "$OK_EXISTS"; run add
-  check 'exists' '[ "$RC" = 0 ] && has "（已存在，槽位 2/10"'
+  check 'exists' '[ "$RC" = 0 ] && has "✅ 已在白名单：203.0.113.7，无需重复添加（已用 2/10 个槽位）"'
 
   reset; respond 200 "$OK_EVICTED"; run
-  check 'evicted' '[ "$RC" = 0 ] && has "新增，淘汰 192.0.2.9"'
+  check 'evicted' '[ "$RC" = 0 ] && has "✅ 已加入白名单：203.0.113.7（槽位已满 2/10，最早的 192.0.2.9 已被移出）"'
 
   reset; respond 401 '{"error": "unauthorized"}'; run
-  check '401 no retry' '[ "$RC" = 1 ] && has "❌ HTTP 401 Token 错误" && [ "$(calls)" = 1 ]'
+  check '401 no retry' '[ "$RC" = 1 ] && has "❌ 加白失败：Token 不正确，请核对 PO0DW_TOKEN（HTTP 401）" && [ "$(calls)" = 1 ]'
 
   reset; respond 400 '{"error": "invalid public IPv4"}'; run
-  check '400 hint' '[ "$RC" = 1 ] && has "服务端没拿到公网 IPv4"'
+  check '400 hint' '[ "$RC" = 1 ] && has "服务端没拿到公网 IPv4，请求可能走了代理或 IPv6（HTTP 400）"'
 
   reset; respond 502 '<html>bad gateway</html>' 1; respond 200 "$OK_EXISTS" 2; run
   check '502 retried then ok' '[ "$RC" = 0 ] && [ "$(calls)" = 2 ] && has "✅"'
 
   reset; respond 503 '{"error": "INPUT/FORWARD guard not verified"}'; run
-  check '503 after retries' '[ "$RC" = 1 ] && [ "$(calls)" = 3 ] && has "HTTP 503 服务端防火墙规则校验失败"'
+  check '503 after retries' '[ "$RC" = 1 ] && [ "$(calls)" = 3 ] && has "服务端防火墙规则校验未通过（HTTP 503）"'
 
   reset; respond 000 'curl: (6) Could not resolve host: fw.test.example' '' 6; run
-  check 'network failure' '[ "$RC" = 1 ] && [ "$(calls)" = 3 ] && has "网络请求失败（已重试 3 次）：curl: (6) Could not resolve host"'
+  check 'network failure' '[ "$RC" = 1 ] && [ "$(calls)" = 3 ] && has "❌ 加白失败：连不上服务器，已重试 3 次（curl: (6) Could not resolve host"'
 
   reset; respond 404 '<html>404</html>'; run
-  check 'nginx 404' '[ "$RC" = 1 ] && has "HTTP 404 路径不存在"'
+  check 'nginx 404' '[ "$RC" = 1 ] && has "接口地址不对，请检查 PO0DW_URL 和 Nginx 配置（HTTP 404）"'
 
   reset; respond 200 "$NOT_ENABLED"; run
-  check 'enabled false' '[ "$RC" = 1 ] && has "服务端规则校验未通过" && has "FORWARD ✗"'
+  check 'enabled false' '[ "$RC" = 1 ] && has "⚠️ 加白未生效：服务端 FORWARD 规则校验未通过（本机 IP 203.0.113.7）"'
 
   reset; respond 200 "$OK_ADDED"; run status
-  check 'status listed' '[ "$RC" = 0 ] && has "当前出口 203.0.113.7" && has "  → 2. 203.0.113.7" && has "    1. 198.51.100.1" && has "✅ 当前出口已在白名单"'
+  check 'status listed' '[ "$RC" = 0 ] && has "✅ 本机出口 203.0.113.7 已在白名单" && has "白名单 2/10（越靠前越早被移出）：" && has "  1. 198.51.100.1" && has "  2. 203.0.113.7  ← 本机"'
   check 'status uses GET /status' 'arg https://fw.test.example/status && ! arg POST'
 
   reset; respond 200 "$NOT_LISTED"; run status
-  check 'status not listed' '[ "$RC" = 1 ] && has "⚠️  当前出口不在白名单"'
+  check 'status not listed' '[ "$RC" = 1 ] && has "⚠️ 本机出口 203.0.113.7 不在白名单，运行 po0dw 即可加入" && has "白名单 1/10"'
+
+  reset; respond 200 "$NOT_ENABLED"; run status
+  check 'status firewall issue' '[ "$RC" = 1 ] && has "⚠️ 本机出口 203.0.113.7 在白名单中，但服务端 FORWARD 规则校验未通过"'
 
   reset; PO0DW_URL=https://fw.test.example///; run; PO0DW_URL=fw.test.example
   check 'trailing slash normalized' 'arg https://fw.test.example/add'
 
   reset; PO0DW_URL=http://fw.test.example; run; PO0DW_URL=fw.test.example
-  check 'http rejected' '[ "$RC" = 2 ] && has "PO0DW_URL 无效" && [ "$(calls)" = 0 ]'
+  check 'http rejected' '[ "$RC" = 2 ] && has "未配置 PO0DW_URL，或地址不是 https 域名（当前：http://fw.test.example）" && [ "$(calls)" = 0 ]'
 
   reset; PO0DW_URL=fw.example.com; run; PO0DW_URL=fw.test.example
   check 'placeholder rejected' '[ "$RC" = 2 ] && [ "$(calls)" = 0 ]'
@@ -125,7 +128,7 @@ suite() {
   check 'placeholder rejected case-insensitively' '[ "$RC" = 2 ] && [ "$(calls)" = 0 ]'
 
   reset; PO0DW_TOKEN=short; run; PO0DW_TOKEN=$TOKEN
-  check 'short token rejected' '[ "$RC" = 2 ] && has "PO0DW_TOKEN 无效"'
+  check 'short token rejected' '[ "$RC" = 2 ] && has "未配置 PO0DW_TOKEN，或格式不对"'
 
   unset PO0DW_URL PO0DW_TOKEN
   reset; run
