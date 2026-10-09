@@ -1,0 +1,20 @@
+#!name=PO0 Dynamic 动态白名单
+#!desc=自动将当前公网 IPv4 加入内网服务器白名单，支持网络切换、每10分钟刷新和状态面板。
+#!category=PO0
+#!author=PO0 Dynamic
+#!arguments=api_host:"",token:"",script_url:""
+#!arguments-desc=api_host: 公网 API 域名（不带 https://）; token: API Bearer Token; script_url: whitelist.js 的完整 HTTPS 地址
+
+[Rule]
+# API 必须直连，避免记录代理出口 IP
+DOMAIN,{{{api_host}}},DIRECT
+
+[Script]
+po0-dynamic-cron = type=cron,cronexp="*/10 * * * *",script-path={{{script_url}}},timeout=60,argument="token={{{token}}}&url=https://{{{api_host}}}"
+
+po0-dynamic-event = type=event,event-name=network-changed,script-path={{{script_url}}},timeout=60,argument="token={{{token}}}&url=https://{{{api_host}}}"
+
+po0-dynamic-panel = type=generic,script-path={{{script_url}}},timeout=60,argument="token={{{token}}}&url=https://{{{api_host}}}"
+
+[Panel]
+po0-dynamic = script-name=po0-dynamic-panel,title=PO0 动态白名单,content=点击刷新,update-interval=300

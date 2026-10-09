@@ -1,0 +1,10 @@
+{
+  "listen_host": "10.1.1.1",
+  "listen_port": 8765,
+  "trusted_proxy_ip": "10.1.2.1",
+  "max_slots": 10,
+  "api_token": "REPLACE_WITH_32_PLUS_RANDOM_CHARACTERS",
+  "ingress_interfaces": [
+    "eth0"
+  ]
+}
