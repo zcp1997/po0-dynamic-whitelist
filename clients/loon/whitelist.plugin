@@ -1,0 +1,12 @@
+#!name=PO0 Dynamic 动态白名单
+#!desc=自动将当前公网 IPv4 加入自建 PO0 动态白名单：网络切换即时触发、每 10 分钟兜底。安装后在插件设置里填写 API 域名与 Token。
+#!author=PO0 Dynamic
+#!homepage=https://github.com/zcp1997/po0-dynamic-whitelist
+
+[Argument]
+api_host = input,"fw.example.com",tag=API 域名,desc=公网 API 域名，不带 https://
+token = input,"",tag=API Token,desc=与服务端 config.json 的 api_token 一致
+
+[Script]
+cron "*/10 * * * *" script-path=https://raw.githubusercontent.com/zcp1997/po0-dynamic-whitelist/main/clients/scripts/whitelist.js, timeout=60, tag=po0-dynamic-cron, argument=[{api_host},{token}]
+network-changed script-path=https://raw.githubusercontent.com/zcp1997/po0-dynamic-whitelist/main/clients/scripts/whitelist.js, timeout=60, tag=po0-dynamic-event, argument=[{api_host},{token}]

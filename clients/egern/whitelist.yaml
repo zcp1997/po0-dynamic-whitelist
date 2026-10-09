@@ -1,0 +1,31 @@
+name: PO0 Dynamic 动态白名单
+description: 自动将当前公网 IPv4 加入自建 PO0 动态白名单：网络切换即时触发、每 10 分钟兜底。安装后在模块参数填写 api_host（API 域名，不带 https://）与 token。
+author: PO0 Dynamic
+homepage: https://github.com/zcp1997/po0-dynamic-whitelist
+icon: checkmark.shield
+
+compat_arguments:
+  api_host: "fw.example.com"
+  token: ""
+
+rules:
+  - domain:
+      match: "{{{api_host}}}"
+      policy: DIRECT
+
+scriptings:
+  - schedule:
+      name: po0-dynamic-cron
+      cron: "*/10 * * * *"
+      script_url: https://raw.githubusercontent.com/zcp1997/po0-dynamic-whitelist/main/clients/egern/whitelist.js
+      timeout: 60
+      env:
+        api_host: "{{{api_host}}}"
+        token: "{{{token}}}"
+  - network:
+      name: po0-dynamic-network
+      script_url: https://raw.githubusercontent.com/zcp1997/po0-dynamic-whitelist/main/clients/egern/whitelist.js
+      timeout: 60
+      env:
+        api_host: "{{{api_host}}}"
+        token: "{{{token}}}"

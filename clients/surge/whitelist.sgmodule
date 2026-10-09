@@ -1,9 +1,10 @@
 #!name=PO0 Dynamic 动态白名单
-#!desc=自动将当前公网 IPv4 加入内网服务器白名单，支持网络切换、每10分钟刷新和状态面板。
+#!desc=自动将当前公网 IPv4 加入自建 PO0 动态白名单：网络切换即时触发、每 10 分钟兜底，附状态面板。
 #!category=PO0
 #!author=PO0 Dynamic
-#!arguments=api_host:"",token:"",script_url:""
-#!arguments-desc=api_host: 公网 API 域名（不带 https://）; token: API Bearer Token; script_url: whitelist.js 的完整 HTTPS 地址
+#!homepage=https://github.com/zcp1997/po0-dynamic-whitelist
+#!arguments=api_host:"fw.example.com",token:"",script_url:"https://raw.githubusercontent.com/zcp1997/po0-dynamic-whitelist/main/clients/scripts/whitelist.js"
+#!arguments-desc=api_host: 公网 API 域名（不带 https://）; token: API Bearer Token; script_url: 脚本地址，默认取本仓库 GitHub，可改为自托管 HTTPS 地址
 
 [Rule]
 # API 必须直连，避免记录代理出口 IP

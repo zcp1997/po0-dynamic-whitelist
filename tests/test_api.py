@@ -49,8 +49,6 @@ class QueueTests(unittest.TestCase):
    with self.assertRaises(ValueError):m.ipv4(ip,public=True)
   self.assertEqual(m.ipv4('8.8.8.8',public=True),'8.8.8.8')
 
-if __name__=='__main__':unittest.main()
-
 class HttpTests(unittest.TestCase):
  def setUp(self):
   import threading,http.server
@@ -91,3 +89,5 @@ class HttpTests(unittest.TestCase):
   self.assertTrue(resp['enabled'])
   self.assertTrue(resp['firewall']['forward'])
   self.assertEqual([x['ip'] for x in self.request('GET','/status')[1]['whitelist']],['8.8.4.4','9.9.9.9'])
+
+if __name__=='__main__':unittest.main()

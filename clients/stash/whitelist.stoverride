@@ -1,0 +1,27 @@
+name: PO0 Dynamic 动态白名单
+desc: |-
+  自动将当前公网 IPv4 加入自建 PO0 动态白名单，每 10 分钟执行，附手动刷新磁贴。
+  使用前把下文 3 处 fw.example.com 换成你的 API 域名，2 处 REPLACE_WITH_TOKEN 换成 Token。
+category: PO0
+
+rules:
+  - DOMAIN,fw.example.com,DIRECT
+
+script-providers:
+  po0-dynamic:
+    url: https://raw.githubusercontent.com/zcp1997/po0-dynamic-whitelist/main/clients/scripts/whitelist.js
+    interval: 86400
+
+cron:
+  script:
+    - name: po0-dynamic
+      cron: '*/10 * * * *'
+      timeout: 60
+      argument: api_host=fw.example.com&token=REPLACE_WITH_TOKEN
+
+tiles:
+  - name: po0-dynamic
+    interval: 300
+    title: PO0 动态白名单
+    content: 点击刷新
+    argument: api_host=fw.example.com&token=REPLACE_WITH_TOKEN

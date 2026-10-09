@@ -1,0 +1,11 @@
+#!name=PO0 Dynamic 动态白名单
+#!desc=自动将当前公网 IPv4 加入自建 PO0 动态白名单：网络切换即时触发、每 10 分钟兜底。Shadowrocket 不支持参数模板，请把下文 3 处 fw.example.com 换成你的 API 域名、2 处 REPLACE_WITH_TOKEN 换成 Token。
+#!author=PO0 Dynamic
+#!homepage=https://github.com/zcp1997/po0-dynamic-whitelist
+
+[Rule]
+DOMAIN,fw.example.com,DIRECT
+
+[Script]
+po0-dynamic-cron = type=cron,cronexpr="*/10 * * * *",script-path=https://raw.githubusercontent.com/zcp1997/po0-dynamic-whitelist/main/clients/scripts/whitelist.js,timeout=60,argument=api_host=fw.example.com&token=REPLACE_WITH_TOKEN
+po0-dynamic-event = type=event,event-name=network-changed,script-path=https://raw.githubusercontent.com/zcp1997/po0-dynamic-whitelist/main/clients/scripts/whitelist.js,timeout=60,argument=api_host=fw.example.com&token=REPLACE_WITH_TOKEN
